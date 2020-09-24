@@ -1,0 +1,79 @@
+/**
+ * This example illustrates a method to restrict
+ * an observer's observations to state variables 
+ * at the end of a logical time.
+ * 
+ * The strategy is to delay IO operations (i.e. print)
+ * by scheduling them using a logical action with
+ * 1 microstep delay.
+ * 
+ * TODO:
+ * 1. create a built in PRINT function.
+ * 2. perform AST transformation during codegen.
+ */
+
+target TypeScript;
+
+reactor A {
+    state i:number(0);
+    output out:number;
+    
+    // Logical Print
+    logical action _print_;
+    
+    /*
+    // Original reaction
+    reaction(startup) -> out {=
+        console.log("A's initial state is " + i);
+        i = i + 1;
+        out = i;
+    =}
+    */
+    
+    // Transformed reaction
+    reaction(startup) -> out, _print_ {=
+        // console.log("A's initial state is " + i); // Should print out 0
+        i = i + 1;
+        out = i;
+        
+        // Schedule _print_ with 1 microstep delay.
+        actions._print_.schedule(0, null);
+    =}
+    reaction(_print_) {=
+        console.log("A's initial state is " + i);
+    =}
+}
+
+reactor B {
+    state i:number(0);
+    input _in:number;
+    
+    // Logical print
+    logical action _print_;
+    state _in_temp_:number;
+    
+    /*
+    // Original reaction
+    reaction(_in) {=
+        console.log("B's state is " + _in);
+    =}
+    */
+    
+    // Transformed reaction
+    reaction(_in) -> _print_ {=
+        // Preserve the value of input _in
+        // Need to use a dedicated function lp() (logical print) to support param.
+        _in_temp_ = _in;
+        actions._print_.schedule(0, null);
+    =}
+    reaction(_print_) _in {=
+        console.log("B's state is " + _in_temp_);
+    =}
+    
+}
+
+main reactor Main {
+    a = new A();
+    b = new B();
+    a.out -> b._in;
+}
