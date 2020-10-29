@@ -1,0 +1,78 @@
+target Cpp {
+    keepalive: true,
+    cmake-include: "TwoButtonsWithDelay.cmake"
+};
+
+main reactor TwoButtonsWithDelay {
+    // required to keep track of the asynchronous thread
+    state thread:std::thread;
+    
+    // keep track of the last pressed button
+    state last_pressed:char('\0');
+    
+    // a physical action that is invoked with a delay of 2 seconds when button 'a' is pressed.
+    physical action button_a;
+    // a physical action that is invoked with a delay of 2 seconds when button 'b' is pressed.
+    physical action button_b;
+    
+    // a dummy timer and reaction just to keep logical time moving forward
+    timer t(0, 2 sec);
+    reaction(t) {==}
+    
+    reaction(startup) -> button_a, button_b {=
+        // Start a thread to asynchronously wait for input and schedule the
+        // button action with a 2 second delay when spacebar is pressed.
+        // When EOF (Ctrl-D) is entered, the thread terminates and also
+        // stops the reactor execution.
+        thread = std::thread([this] () {
+            while(1) {
+                int c = getchar();
+                if (c == 'a') {
+                    button_a.schedule(2s);
+                }
+                if (c == 'b') {
+                    button_b.schedule(2s);
+                }
+                if (c == EOF) {
+                    break;
+                }
+            }
+            environment()->async_shutdown();
+        });
+    
+        printf("***************************************************************\n");
+        printf("Press 'a' and hit return or enter to press button a\n");
+        printf("Press 'b' and hit return or enter to press button b\n");
+        printf("Type Control-D (EOF) to quit.\n\n");
+    =}
+    
+    reaction (button_a) {=
+        if (last_pressed == '\0') {
+            last_pressed = 'a';
+        } else {
+            if (last_pressed == 'a') {
+                printf("Button a was pressed twice.\n");
+            } else {
+                printf("Button a was pressed after b.\n");
+            }
+            last_pressed = '\0';    
+        }
+    =}
+    
+    reaction (button_b) {=
+        if (last_pressed == '\0') {
+            last_pressed = 'b';
+        } else {
+            if (last_pressed == 'b') {
+                printf("Button b was pressed twice.\n");
+            } else {
+                printf("Button b was pressed after a.\n");
+            }
+            last_pressed = '\0';    
+        }
+    =}
+        
+    reaction(shutdown) {=
+        thread.join();
+    =}
+}

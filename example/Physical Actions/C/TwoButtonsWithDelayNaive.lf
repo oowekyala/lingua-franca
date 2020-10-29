@@ -1,0 +1,91 @@
+target C {
+    keepalive: true,
+    threads: 1
+};
+
+main reactor TwoButtonsWithDelay {
+    // keep track of the last pressed button
+    state last_pressed:char('\0');
+    
+    // a physical action that is invoked with a delay of 2 seconds when button 'a' is pressed.
+    physical action button_a;
+    // a physical action that is invoked with a delay of 2 seconds when button 'b' is pressed.
+    physical action button_b;
+    
+    // a dummy timer and reaction just to keep logical time moving forward
+    timer t(0, 2 sec);
+    reaction(t) {==}
+    
+    preamble {=
+        struct {
+            void* a;
+            void* b;
+        } buttons;
+        
+        void* read_input(void* x) {
+            while(1) {
+                int c = getchar();
+                if (c == 'a') {
+                    schedule(buttons.a, SECS(2));
+                }
+                if (c == 'b') {
+                    schedule(buttons.b, SECS(2));
+                }
+                if (c == EOF) {
+                    break;
+                }
+            }
+
+            stop();
+        }   
+    =}
+    
+    reaction(startup) -> button_a, button_b {=
+        // Start a thread to asynchronously wait for input and schedule the
+        // button action with a 2 second delay when spacebar is pressed.
+        // When EOF (Ctrl-D) is entered, the thread terminates and also
+        // stops the reactor execution.
+        pthread_t thread_id;
+
+
+        // FIXME How can we pass multiple actions to the thread?
+        buttons.a = button_a;
+        buttons.b = button_b;
+        pthread_create(&thread_id, NULL, &read_input, NULL);
+    
+        printf("***************************************************************\n");
+        printf("Press 'a' and hit return or enter to press button a\n");
+        printf("Press 'b' and hit return or enter to press button b\n");
+        printf("Type Control-D (EOF) to quit.\n\n");
+    =}
+    
+    reaction (button_a) {=
+        if (self->last_pressed == '\0') {
+            self->last_pressed = 'a';
+        } else {
+            if (self->last_pressed == 'a') {
+                printf("Button a was pressed twice.\n");
+            } else {
+                printf("Button a was pressed after b.\n");
+            }
+            self->last_pressed = '\0';    
+        }
+    =}
+    
+    reaction (button_b) {=
+        if (self->last_pressed == '\0') {
+            self->last_pressed = 'b';
+        } else {
+            if (self->last_pressed == 'b') {
+                printf("Button b was pressed twice.\n");
+            } else {
+                printf("Button b was pressed after a.\n");
+            }
+            self->last_pressed = '\0';    
+        }
+    =}
+        
+    reaction(shutdown) {=
+        // FIXME The thread should be joined here
+    =}
+}
