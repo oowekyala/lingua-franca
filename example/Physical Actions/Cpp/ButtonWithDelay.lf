@@ -1,0 +1,72 @@
+target Cpp {
+    keepalive: true,
+    cmake-include: "ButtonWithDelay.cmake"
+};
+
+main reactor ButtonWithDelay {
+    // this internal state variable represents a connected LED
+    state led:bool(false);
+    
+    // required to keep track of the asynchronous thread
+    state thread:std::thread;
+    
+    // a physical action that is invoked with a delay of 2 seconds when a button is pressed.
+    // The action carries the physical time of the button press as value only for debugging purposes.
+    physical action button:{=reactor::TimePoint=};
+    
+    // a dummy timer and reaction just to keep logical time moving forward
+    timer t(0, 2 sec);
+    reaction(t) {==}
+    
+    // a function to print the current state
+    private preamble {=
+        void print_message(bool led, reactor::Duration t) {
+            system("clear");
+            printf("***************************************************************\n");
+            printf("Press  return or enter to toggle the LED with a 2 second delay.\n");
+            printf("Type Control-D (EOF) to quit.\n\n");
+            if (led) {
+                printf("LED: \e[0;30m\e[42m0\e[0m\n");
+            } else {
+                printf("LED: 0\n");
+            }
+            printf("\n");
+            std::cout << "Last delay: " << t << '\n';
+        }
+    =}
+    
+    reaction(startup) -> button {=
+        // Start a thread to asynchronously wait for input and schedule the
+        // button action with a 2 second delay when spacebar is pressed.
+        // When EOF (Ctrl-D) is entered, the thread terminates and also
+        // stops the reactor execution.
+        thread = std::thread([this] () {
+            while(1) {
+                int c = getchar();
+                if (c == '\n') {
+                    button.schedule(get_physical_time(), 2s);
+                } 
+                if (c == EOF) {
+                    break;
+                }
+            }
+            environment()->async_shutdown();
+        });
+    
+        // print initial state 
+        print_message(led, 0s);
+    =}
+    
+    reaction (button) {=
+        // calculate physical delay between button press and reaction invocation 
+        auto delay = get_physical_time() - *button.get();
+        // toggle the led
+        led = !led;
+        // print the updated state
+        print_message(led, delay);
+    =}
+        
+    reaction(shutdown) {=
+        thread.join();
+    =}
+}
