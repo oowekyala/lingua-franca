@@ -1,0 +1,63 @@
+target Cpp {
+    timeout: 10 sec,
+    keepalive: true,
+    cmake-include: "AsyncCallback.cmake"
+};
+
+main reactor AsyncCallback {        
+    timer t(0, 2 sec);
+    state thread:{=std::thread=};
+    state expected_time:{=reactor::TimePoint=};
+
+     // a dummy timer and reaction just to keep logical time moving forward
+    timer t2(0, 33 msec);
+    reaction(t2) {==}
+
+    physical action callback:int;
+    logical action result:int;
+
+    reaction(t) -> callback {=
+        // update expected callback time
+        expected_time = get_logical_time() + 200ms;
+        
+        // make sure to join the old thread first
+        if(thread.joinable()) {
+            thread.join();
+        }
+
+        // start new thread
+        this->thread = std::thread([this] () {
+             // Simulate time passing before a callback occurs
+            std::this_thread::sleep_for(100ms);
+            // Schedule twice. If the action is not physical, these should
+            // get consolidated into a single action triggering. If it is,
+            // then they cause two separate triggerings with close but not
+            // equal time stamps.
+            callback.schedule(42);
+        });
+    =}
+    
+    reaction (callback) -> result {=
+        auto delay = expected_time - get_logical_time();
+        if (delay >= 0s) {
+            result.schedule(callback.get(), delay);    
+        } else {
+            fprintf(stderr,"ERROR: callback was invoked too late!");
+            exit(1);
+        }
+    =}
+    
+    reaction (result) {=
+        std::cout << "Received " << *result.get() << '\n'
+                  << "at logical time: " << get_elapsed_logical_time() << '\n'
+                  << "at physical time: " << get_elapsed_physical_time() << '\n'
+                  << '\n';
+    =}
+
+    reaction(shutdown) {=
+        // make sure to join the thread before shutting down
+        if(thread.joinable()) {
+            thread.join();
+        }
+    =}
+}

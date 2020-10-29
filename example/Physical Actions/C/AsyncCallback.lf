@@ -1,0 +1,46 @@
+target C {
+    timeout: 10 sec,
+    keepalive: true,
+    threads: 1
+};
+
+main reactor AsyncCallback {        
+    timer t(0, 2 sec);
+    
+     // a dummy timer and reaction just to keep logical time moving forward
+    timer t2(0, 33 msec);
+    reaction(t2) {==}
+    
+    state thread_id:pthread_t(0);
+
+    physical action result:int;
+
+    preamble {=
+        void* async_process(void* a) {
+            // sleep for 100 ms
+            struct timespec sleep_time = {(time_t) 0, (long)100000000};
+            struct timespec remaining_time;
+            nanosleep(&sleep_time, &remaining_time);
+            schedule_int(a, MSECS(200), 42);
+            return NULL;
+        }
+    =}
+
+    reaction(t) -> result {=
+        // FIXME We should join the old thread first
+        
+        // start new thread
+        pthread_create(&self->thread_id, NULL, &async_process, result);
+    =}
+    
+    reaction (result) {=
+        printf("Received %lu\n", result->value);
+        printf("at logical time: %lu ns\n", get_elapsed_logical_time());
+        printf("at physical time: %lu ns\n", get_elapsed_physical_time());
+        printf("\n");
+    =}
+
+    reaction(shutdown) {=
+        // FIXME We should join the old thread here
+    =}
+}
