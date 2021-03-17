@@ -2119,7 +2119,7 @@ abstract class GeneratorBase extends AbstractLinguaFrancaValidator {
                                     }
                                 }
                             }
-                        } */
+                        }
                     }
 //>>>>>>> master
                 }
