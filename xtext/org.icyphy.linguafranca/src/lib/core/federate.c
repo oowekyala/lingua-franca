@@ -976,7 +976,7 @@ void _lf_close_outbound_socket(int fed_id) {
  * @param fed_id The sending federate ID or -1 if the centralized coordination.
  */
 void handle_port_absent_message(int socket, unsigned char* buffer, int fed_id) {
-    size_t bytes_to_read = sizeof(ushort) + sizeof(ushort);
+    size_t bytes_to_read = sizeof(ushort) + sizeof(ushort) + sizeof(instant_t) + sizeof(microstep_t);
     size_t bytes_read = read_from_socket(socket, bytes_to_read, buffer);
     if (bytes_read != bytes_to_read) {
         _lf_close_inbound_socket(fed_id);
@@ -985,12 +985,20 @@ void handle_port_absent_message(int socket, unsigned char* buffer, int fed_id) {
     // Extract the header information.
     unsigned short port_id = extract_ushort(buffer);
     unsigned short federate_id = extract_ushort(&(buffer[sizeof(ushort)]));
+    tag_t intended_tag;
+    intended_tag.time = extract_ll(&(buffer[sizeof(ushort)+sizeof(ushort)]));
+    intended_tag.microstep = extract_int(&(buffer[sizeof(ushort)+sizeof(ushort)+sizeof(instant_t)])); 
 
     LOG_PRINT("Handling port absent for port %d from federate %d.", port_id, federate_id);
 
     pthread_mutex_lock(&mutex);
     // Set the mutex status as absent
-    _fed.network_input_port_triggers[port_id]->status = absent;
+    // First, check if the absent message was intended for the current tag
+    // or the future tag.
+    if(compare_tags(intended_tag, get_current_tag()) == 0) {
+        _fed.network_input_port_triggers[port_id]->status = absent;
+    }
+    _fed.network_input_port_triggers[port_id]->last_known_status_tag = intended_tag;
     // Port is now absent. Therfore, notify the network input
     // control reactions to stop waiting and re-check the port
     // status.
@@ -1092,9 +1100,9 @@ void handle_timed_message(int socket, unsigned char* buffer, int fed_id) {
 
     // Read the tag of the message.
     // FIXME : intended_tag
-    tag_t tag;
-    tag.time = extract_ll(&(buffer[sizeof(ushort) + sizeof(ushort) + sizeof(int)]));
-    tag.microstep = extract_int(&(buffer[sizeof(ushort) + sizeof(ushort) + sizeof(int) + sizeof(instant_t)]));
+    tag_t intended_tag;
+    intended_tag.time = extract_ll(&(buffer[sizeof(ushort) + sizeof(ushort) + sizeof(int)]));
+    intended_tag.microstep = extract_int(&(buffer[sizeof(ushort) + sizeof(ushort) + sizeof(int) + sizeof(instant_t)]));
 
 #ifdef FEDERATED_DECENTRALIZED // Only applicable for federated programs with decentralized coordination
     // For logical connections in decentralized coordination,
@@ -1104,10 +1112,10 @@ void handle_timed_message(int socket, unsigned char* buffer, int fed_id) {
     // by the message. If this tag is in the past, the function will cause
     // the tag to freeze at the current level.
     // If something happens, make sure to release the barrier.
-    _lf_increment_global_tag_barrier(tag);
+    _lf_increment_global_tag_barrier(intended_tag);
 #endif
     LOG_PRINT("Received message with tag: (%lld, %u), Current tag: (%lld, %u).",
-            tag.time - start_time, tag.microstep, get_elapsed_logical_time(), get_microstep());
+            intended_tag.time - start_time, intended_tag.microstep, get_elapsed_logical_time(), get_microstep());
 
     // Read the payload.
     // Allocate memory for the message contents.
@@ -1128,21 +1136,25 @@ void handle_timed_message(int socket, unsigned char* buffer, int fed_id) {
     // The following is only valid for string messages.
     // DEBUG_PRINT("Message received: %s.", message_contents);
 
-    pthread_mutex_lock(&mutex);
     // Create a token for the message
     lf_token_t* message_token = create_token(action->element_size);
     // Set up the token
+
     message_token->value = message_contents;
     message_token->length = length;
+
+    pthread_mutex_lock(&mutex);
+
+    _fed.network_input_port_triggers[port_id]->last_known_status_tag = intended_tag;
 
     // Check if reactions need to be inserted directly into the reaction
     // queue or a call to schedule is needed. This checks whether the status
     // of the port is unkown for the current tag.
-    if (compare_tags(tag, get_current_tag()) == 0 &&
+    if (compare_tags(intended_tag, get_current_tag()) == 0 &&
         _fed.network_input_port_triggers[port_id]->status == unknown) {
 
-        LOG_PRINT("Inserting reactions directly at tag (%lld, %u).", tag.time - start_time, tag.microstep);
-        action->intended_tag = tag;
+        LOG_PRINT("Inserting reactions directly at tag (%lld, %u).", intended_tag.time - start_time, intended_tag.microstep);
+        action->intended_tag = intended_tag;
         _lf_insert_reactions_for_trigger(action, message_token);
         // Notify the main thread in case it is waiting for reactions.
         DEBUG_PRINT("Broadcasting notification that reaction queue changed.");
@@ -1151,9 +1163,12 @@ void handle_timed_message(int socket, unsigned char* buffer, int fed_id) {
         // Acquire the one mutex lock to prevent logical time from advancing
         // during the call to schedule().
 
-        LOG_PRINT("Calling schedule with tag (%lld, %u).", tag.time - start_time, tag.microstep);
-        schedule_message_received_from_network_already_locked(action, tag, message_token);
+        LOG_PRINT("Calling schedule with tag (%lld, %u).", intended_tag.time - start_time, intended_tag.microstep);
+        schedule_message_received_from_network_already_locked(action, intended_tag, message_token);
+        // Notify any control reaction that a future event has been produced for a port
+        pthread_cond_broadcast(&port_status_changed);
     }
+
 
 #ifdef FEDERATED_DECENTRALIZED // Only applicable for federated programs with decentralized coordination
     // Finally, decrement the barrier to allow the execution to continue
@@ -1862,12 +1877,15 @@ void send_port_absent_to_federate(unsigned short port_ID,
                 port_ID, fed_ID);
 
     // Construct the message
-    int message_length = 1 + sizeof(port_ID) + sizeof(fed_ID);
+    int message_length = 1 + sizeof(port_ID) + sizeof(fed_ID) + sizeof(instant_t) + sizeof(microstep_t);
     unsigned char buffer[message_length];
+    tag_t current_tag = get_current_tag();
 
     buffer[0] = PORT_ABSENT;
     encode_ushort(port_ID, &(buffer[1]));
     encode_ushort(fed_ID, &(buffer[1+sizeof(port_ID)]));
+    encode_ll(current_tag.time, &(buffer[1+sizeof(port_ID)+sizeof(fed_ID)]));
+    encode_int(current_tag.microstep, &(buffer[1+sizeof(port_ID)+sizeof(fed_ID)+sizeof(instant_t)]));
 
     int socket = -1;
 
