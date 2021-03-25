@@ -4346,12 +4346,15 @@ class CGenerator extends GeneratorBase {
                 self->___«port.name».status = present;
                 pthread_mutex_unlock(&mutex);
                 return;
-            } else if (self->___«port.name».status == absent || 
+            } else if (self->___«port.name».status == unknown && 
                               compare_tags(self->___«port.name».last_known_status_tag, 
                                 get_current_tag()) > 0) {
                 // We have a known status for this port in a future tag. Therefore, no event is going
                 // to be present for this port at the current tag.
                 self->___«port.name».status = absent;
+                pthread_mutex_unlock(&mutex);
+                return;
+            } else if (self->___«port.name».status == absent) {
                 pthread_mutex_unlock(&mutex);
                 return;
             }
@@ -4378,12 +4381,15 @@ class CGenerator extends GeneratorBase {
                                 // Unlock the mutex
                                 pthread_mutex_unlock(&mutex);
                                 return;
-                            } else if (self->___«port.name».status == absent || 
-                                              compare_tags(self->___«port.name».last_known_status_tag, 
-                                                get_current_tag()) > 0) {
+                            } else if (self->___«port.name».status == unknown && 
+                                                  compare_tags(self->___«port.name».last_known_status_tag, 
+                                                    get_current_tag()) > 0) {
                                 // We have a known status for this port in a future tag. Therefore, no event is going
                                 // to be present for this port at the current tag.
                                 self->___«port.name».status = absent;
+                                pthread_mutex_unlock(&mutex);
+                                return;
+                            } else if (self->___«port.name».status == absent) {
                                 pthread_mutex_unlock(&mutex);
                                 return;
                             }
@@ -4410,12 +4416,15 @@ class CGenerator extends GeneratorBase {
                             // Unlock the mutex
                             pthread_mutex_unlock(&mutex);
                             return;
-                        } else if (self->___«port.name».status == absent || 
+                        }else if (self->___«port.name».status == unknown && 
                                           compare_tags(self->___«port.name».last_known_status_tag, 
                                             get_current_tag()) > 0) {
                             // We have a known status for this port in a future tag. Therefore, no event is going
                             // to be present for this port at the current tag.
                             self->___«port.name».status = absent;
+                            pthread_mutex_unlock(&mutex);
+                            return;
+                        } else if (self->___«port.name».status == absent) {
                             pthread_mutex_unlock(&mutex);
                             return;
                         }
@@ -4425,7 +4434,7 @@ class CGenerator extends GeneratorBase {
         }
         
         result.append('''
-                if (!«port.name»->is_present) {
+                if (self->___«port.name».status == unknown) {
                     // Port will not be triggered at
                     // current logical time. Set the absent
                     // value of the trigger accordingly
