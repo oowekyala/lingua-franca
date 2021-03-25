@@ -1161,6 +1161,8 @@ void handle_timed_message(int socket, unsigned char* buffer, int fed_id) {
         // Notify the main thread in case it is waiting for reactions.
         DEBUG_PRINT("Broadcasting notification that reaction queue changed.");
         pthread_cond_signal(&reaction_q_changed);
+        // FIXME
+        _fed.network_input_port_triggers[port_id]->status = present;
     } else {
         // Acquire the one mutex lock to prevent logical time from advancing
         // during the call to schedule().
