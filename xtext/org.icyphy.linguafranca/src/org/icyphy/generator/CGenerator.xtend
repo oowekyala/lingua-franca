@@ -406,6 +406,7 @@ class CGenerator extends GeneratorBase {
             startTimeStepIsPresentCount = 0
             startTimeStepTokens = 0
             
+            
             // If federated, append the federate name to the file name.
             // Only generate one output if there is no federation.
             if (!federate.isSingleton) {
@@ -4509,7 +4510,17 @@ class CGenerator extends GeneratorBase {
         // Handle target parameters.
         // First, if there are federates, then ensure that threading is enabled.
         if (targetConfig.threads === 0 && federates.length > 1) {
-            targetConfig.threads = 1
+            targetConfig.threads = 1           
+            
+                
+            for (federate : federates) {
+                // The number of threads needs to be at least one larger than the input ports
+                // to allow the federate to wait on all input ports while allowing an additional
+                // worker thread to process incoming messages.
+                if (targetConfig.threads < federate.networkInputPorts.size + 1) {
+                    targetConfig.threads = federate.networkInputPorts.size + 1;
+                }            
+            }
         }
 
         includeTargetLanguageSourceFiles()
